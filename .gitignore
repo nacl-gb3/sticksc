@@ -36,6 +36,8 @@
 *.x86_64
 *.hex
 
+sticksc 
+
 # Debug files
 *.dSYM/
 *.su
@@ -50,3 +52,5 @@ modules.order
 Module.symvers
 Mkfile.old
 dkms.conf
+
+.direnv
