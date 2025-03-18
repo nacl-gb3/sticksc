@@ -22,6 +22,8 @@ int split(struct player *off);
 
 void print_game_state(struct player *you, struct player *opp);
 void compress_game_state(struct player *you, struct player *opp);
+void decompress_game_state(struct player *you, struct player *opp);
 game_state get_compressed_game_state();
+void set_compressed_game_state(game_state new_ste);
 
 #endif /* ifdef ndef STICKSC_GAME */

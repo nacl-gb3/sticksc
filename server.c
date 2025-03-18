@@ -202,7 +202,7 @@ void *server_run(void *arg) {
 
   while (port_active) {
     if (connect_socket_fd == -1) {
-      printf("Waiting for connection...\n");
+      printf("Waiting for connection on port %d...\n", active_port);
       connect_socket_fd = accept(
           socket_listen_fd, (struct sockaddr *)&sockaddrpeer, &sockpeerlen);
     }
@@ -211,11 +211,13 @@ void *server_run(void *arg) {
     char recv_buffer[128] = {0};
     ssize_t bread = recv(connect_socket_fd, recv_buffer, 128, 0);
     if (bread == -1) {
+      connect_socket_fd = -1;
       continue;
     }
 
     char *source = strtok(recv_buffer, " ");
     if (!source || strcmp(source, "sticksc")) {
+      connect_socket_fd = -1;
       continue;
     }
 
@@ -265,11 +267,14 @@ void *server_run(void *arg) {
       }
       // send game state to client process
     } else if (!strcmp(op, "send-state")) {
+      // receive game state from client process
       char *state = strtok(NULL, " ");
       if (!state) {
         // ERROR
         continue;
       }
+      // convert state string to integer (base 16?)
+      set_compressed_game_state(0);
       pthread_mutex_lock(&turn_lock);
       pthread_cond_signal(&turn_cv);
       pthread_mutex_unlock(&turn_lock);

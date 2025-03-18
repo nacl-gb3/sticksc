@@ -242,16 +242,32 @@ void compress_game_state(struct player *you, struct player *opp) {
   // Opp Left
   game_ste |= (game_state)opp->left_cnt;
   // Opp Right
-  game_ste |= ((game_state)opp->right_cnt) << 1;
+  game_ste |= ((game_state)opp->right_cnt) << 8;
   // You Left
-  game_ste |= ((game_state)you->left_cnt) << 2;
+  game_ste |= ((game_state)you->left_cnt) << 16;
   // You Right
-  game_ste |= ((game_state)you->right_cnt) << 3;
+  game_ste |= ((game_state)you->right_cnt) << 24;
 
+}
+
+void decompress_game_state(struct player *you, struct player *opp) {
+  // Four Bytes:
+  // Byte 1: You Left
+  // Byte 2: You Right
+  // Byte 3: Opp Left
+  // Byte 4: Opp Right
+  you->left_cnt = game_ste & 0xFF;
+  you->right_cnt = (game_ste >> 8) & 0xFF;
+  opp->left_cnt = (game_ste >> 16) & 0xFF;;
+  opp->right_cnt = (game_ste >> 24) & 0xFF;;
 }
 
 game_state get_compressed_game_state() {
   return game_ste;
+}
+
+void set_compressed_game_state(game_state new_ste) {
+  game_ste = new_ste;
 }
 
 static bool char_is_valid_val(char c) { return (c >= '1' && c < '5'); }
