@@ -64,17 +64,16 @@ int server_init(uint16_t host_port, uint16_t connect_port, bool hosting) {
     pthread_mutex_unlock(&server_create_lock);
   } else {
     // create server connection to listen to other server
-    int connection_init_err = 0;
-    char *name = connection_init(host_port, connect_port, &connection_init_err);
+    int connection_init_err = connection_init(host_port, connect_port);
     if (connection_init_err) {
-      return CONNECTION_CREATE_ERROR;
+      return connection_init_err;
     }
   }
 
   return EXIT_SUCCESS;
 }
 
-char *connection_init(uint16_t host_port, uint16_t connect_port, int *err) {
+int connection_init(uint16_t host_port, uint16_t connect_port) {
 
   active_port = connect_port;
   target_port = host_port;
@@ -88,9 +87,8 @@ char *connection_init(uint16_t host_port, uint16_t connect_port, int *err) {
   int connect_err = connect(target_sock_fd, (struct sockaddr *)&sockaddrtarg,
                             sizeof(struct sockaddr_in));
   if (connect_err) {
-    *err = CONNECTION_CREATE_ERROR;
     close(target_sock_fd);
-    return NULL;
+    return CONNECTION_CREATE_ERROR;
   }
 
   // test request - get name of opponent
@@ -98,64 +96,59 @@ char *connection_init(uint16_t host_port, uint16_t connect_port, int *err) {
   ssize_t bread =
       snprintf(send_buffer, 128, "sticksc name %s", getenv("USERNAME"));
   if (bread == -1) {
-    *err = STDOUT_ERROR;
     close(target_sock_fd);
-    return NULL;
+    return STDOUT_ERROR;
   }
 
   ssize_t bsent = send(target_sock_fd, send_buffer, 128, 0);
   if (bsent == -1) {
-    *err = CONNECTION_SEND_ERROR;
     close(target_sock_fd);
-    return NULL;
+    return CONNECTION_SEND_ERROR;
   }
 
   char recv_buffer[128] = {0};
   bread = recv(target_sock_fd, recv_buffer, 128, 0);
   if (bread == -1) {
-    *err = CONNECTION_RECV_ERROR;
     close(target_sock_fd);
-    return NULL;
+    return CONNECTION_RECV_ERROR;
   }
 
   char *source = strtok(recv_buffer, " ");
   if (!source || strcmp(source, "sticksc")) {
-    *err = CONNECTION_RECV_ERROR;
     close(target_sock_fd);
-    return NULL;
+    return CONNECTION_RECV_ERROR;
   }
 
   char *op = strtok(NULL, " ");
 
   if (!op) {
-    *err = CONNECTION_RECV_ERROR;
     close(target_sock_fd);
-    return NULL;
+    return CONNECTION_RECV_ERROR;
   }
 
   if (strcmp(op, "name")) {
-    *err = CONNECTION_RECV_ERROR;
     close(target_sock_fd);
-    return NULL;
+    return CONNECTION_RECV_ERROR;
   }
 
   char *name = strtok(NULL, " ");
   if (!name) {
-    *err = CONNECTION_RECV_ERROR;
     close(target_sock_fd);
-    return NULL;
+    return CONNECTION_RECV_ERROR;
   }
   strncpy(target_opp_name, name, 64);
   target_opp_name[63] = '\0';
   port_targeted = true;
 
-  return target_opp_name;
+  return EXIT_SUCCESS;
 }
 
 char *connection_wait() {
-  pthread_mutex_lock(&connection_create_lock);
-  pthread_cond_wait(&connection_create_cv, &connection_create_lock);
-  pthread_mutex_unlock(&connection_create_lock);
+  if (server_hosting) {
+    pthread_mutex_lock(&connection_create_lock);
+    pthread_cond_wait(&connection_create_cv, &connection_create_lock);
+    pthread_mutex_unlock(&connection_create_lock);
+  }
   return target_opp_name;
 }
 
@@ -205,10 +198,10 @@ void *server_run(void *arg) {
   // listen for connections here
   struct sockaddr_in sockaddrpeer;
   socklen_t sockpeerlen = sizeof(struct sockaddr_in);
-  int connect_socket_fd;
+  int connect_socket_fd = -1;
 
   while (port_active) {
-    if (!port_targeted) {
+    if (connect_socket_fd == -1) {
       printf("Waiting for connection...\n");
       connect_socket_fd = accept(
           socket_listen_fd, (struct sockaddr *)&sockaddrpeer, &sockpeerlen);
@@ -308,7 +301,7 @@ void turn_await() {
 void turn_complete(int err) {
   if (server_hosting) {
     pthread_mutex_lock(&turn_lock);
-    int game_err_status = err;
+    game_err_status = err;
     pthread_cond_signal(&turn_cv);
     // signals client get-state request
     pthread_mutex_unlock(&turn_lock);

@@ -43,7 +43,7 @@ int main(int argc, char **argv) {
     }
   }
 
-  char *your_name = getenv("USERNAME");
+  char *your_name = getenv("USER");
   if (!your_name) {
     return -ENV_GET_ERROR;
   }
@@ -62,7 +62,7 @@ int main(int argc, char **argv) {
     return -server_init_err;
   }
 
-  char *opp_name;
+  char *opp_name = connection_wait();
 
   if (!opp_name) {
     return -CONNECTION_CREATE_ERROR;

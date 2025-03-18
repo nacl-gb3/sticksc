@@ -55,7 +55,6 @@ int play_game(struct player *you, struct player *opp, bool hosting) {
 int get_action(struct player *off, struct player *tgt) {
   char *line = NULL;
   size_t size = 0;
-  bool input_valid;
 
   int attack_err = 0;
   int split_err = 0;
