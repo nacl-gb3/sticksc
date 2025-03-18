@@ -1,6 +1,7 @@
 #include "server.h"
 #include "error.h"
 #include "game.h"
+#include "netinet/in.h"
 #include <netinet/ip.h>
 #include <pthread.h>
 #include <stdbool.h>
@@ -8,6 +9,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <unistd.h>
 
 pthread_t server_thread;
 
@@ -23,6 +25,7 @@ bool port_active = false;
 uint16_t active_port;
 bool port_targeted = false;
 uint16_t target_port;
+int target_sock_fd;
 char target_opp_name[64];
 
 int game_err_status = 0;
@@ -72,30 +75,90 @@ int server_init(uint16_t host_port, uint16_t connect_port, bool hosting) {
 }
 
 char *connection_init(uint16_t host_port, uint16_t connect_port, int *err) {
-  pthread_mutex_lock(&connection_create_lock);
 
   active_port = connect_port;
   target_port = host_port;
+
+  uint16_t be_targ_port = __builtin_bswap16(target_port);
+  struct sockaddr_in sockaddrtarg = {.sin_family = AF_INET,
+                                     .sin_port = be_targ_port,
+                                     .sin_addr = {.s_addr = INADDR_LOOPBACK}};
+
+  target_sock_fd = socket(AF_INET, SOCK_STREAM, 0);
+  int connect_err = connect(target_sock_fd, (struct sockaddr *)&sockaddrtarg,
+                            sizeof(struct sockaddr_in));
+  if (connect_err) {
+    *err = CONNECTION_CREATE_ERROR;
+    close(target_sock_fd);
+    return NULL;
+  }
+
+  // test request - get name of opponent
+  char send_buffer[128] = {0};
+  ssize_t bread =
+      snprintf(send_buffer, 128, "sticksc name %s", getenv("USERNAME"));
+  if (bread == -1) {
+    *err = STDOUT_ERROR;
+    close(target_sock_fd);
+    return NULL;
+  }
+
+  ssize_t bsent = send(target_sock_fd, send_buffer, 128, 0);
+  if (bsent == -1) {
+    *err = CONNECTION_SEND_ERROR;
+    close(target_sock_fd);
+    return NULL;
+  }
+
+  char recv_buffer[128] = {0};
+  bread = recv(target_sock_fd, recv_buffer, 128, 0);
+  if (bread == -1) {
+    *err = CONNECTION_RECV_ERROR;
+    close(target_sock_fd);
+    return NULL;
+  }
+
+  char *source = strtok(recv_buffer, " ");
+  if (!source || strcmp(source, "sticksc")) {
+    *err = CONNECTION_RECV_ERROR;
+    close(target_sock_fd);
+    return NULL;
+  }
+
+  char *op = strtok(NULL, " ");
+
+  if (!op) {
+    *err = CONNECTION_RECV_ERROR;
+    close(target_sock_fd);
+    return NULL;
+  }
+
+  if (strcmp(op, "name")) {
+    *err = CONNECTION_RECV_ERROR;
+    close(target_sock_fd);
+    return NULL;
+  }
+
+  char *name = strtok(NULL, " ");
+  if (!name) {
+    *err = CONNECTION_RECV_ERROR;
+    close(target_sock_fd);
+    return NULL;
+  }
+  strlcpy(target_opp_name, name, 64);
   port_targeted = true;
 
-  strlcpy(target_opp_name, "nacliii", 64);
-
-  pthread_mutex_unlock(&connection_create_lock);
   return target_opp_name;
 }
 
 char *connection_wait() {
   pthread_mutex_lock(&connection_create_lock);
-
-  // wait to receive connection
-  while (!port_targeted) {
-    pthread_cond_wait(&connection_create_cv, &connection_create_lock);
-  }
-
+  pthread_cond_wait(&connection_create_cv, &connection_create_lock);
   pthread_mutex_unlock(&connection_create_lock);
   return target_opp_name;
 }
 
+// TODO: BETTER ERROR CHECKING 
 void *server_run(void *arg) {
   (void)arg; // UNUSED
 
@@ -118,6 +181,7 @@ void *server_run(void *arg) {
   int bind_error = bind(socket_listen_fd, (struct sockaddr *)&sockaddrin,
                         sizeof(struct sockaddr_in));
   if (bind_error) {
+    close(socket_listen_fd);
     pthread_cond_signal(&server_create_cv);
     pthread_mutex_unlock(&server_create_lock);
     return (void *)SERVER_CREATE_ERROR;
@@ -125,6 +189,7 @@ void *server_run(void *arg) {
 
   int listen_error = listen(socket_listen_fd, 1);
   if (listen_error) {
+    close(socket_listen_fd);
     pthread_cond_signal(&server_create_cv);
     pthread_mutex_unlock(&server_create_lock);
     return (void *)SERVER_CREATE_ERROR;
@@ -139,31 +204,30 @@ void *server_run(void *arg) {
   // listen for connections here
   struct sockaddr_in sockaddrpeer;
   socklen_t sockpeerlen = sizeof(struct sockaddr_in);
-  int peer_socket_fd =
-      accept(socket_listen_fd, (struct sockaddr *)&sockaddrpeer, &sockpeerlen);
-
-  char buffer[1024] = {0};
+  int connect_socket_fd;
 
   while (port_active) {
-    ssize_t bread = recv(peer_socket_fd, buffer, 1024, 0);
-    if (bread == -1) {
-      // figure out how to handle input error later
-      // fatal
-      break;
+    if (!port_targeted) {
+      printf("Waiting for connection...\n");
+      connect_socket_fd = accept(
+          socket_listen_fd, (struct sockaddr *)&sockaddrpeer, &sockpeerlen);
     }
 
-    char *source = strtok(buffer, " ");
+    // TODO: HANDLE COMMS ERRORS BETTER
+    char recv_buffer[128] = {0};
+    ssize_t bread = recv(connect_socket_fd, recv_buffer, 128, 0);
+    if (bread == -1) {
+      continue;
+    }
+
+    char *source = strtok(recv_buffer, " ");
     if (!source || strcmp(source, "sticksc")) {
-      // figure out how to handle input error later
-      // need to find new peer?
       continue;
     }
 
     char *op = strtok(NULL, " ");
 
     if (!op) {
-      // figure out how to handle input error later
-      // fatal?
       continue;
     }
 
@@ -171,36 +235,56 @@ void *server_run(void *arg) {
       server_stop();
     } else if (!strcmp(op, "name")) {
       char *name = strtok(NULL, " ");
-      if (!name) {
-        // figure out how to handle input error later
-        // fatal?
-        break;
+      if (name) {
+        strlcpy(target_opp_name, name, 64);
+        pthread_mutex_lock(&connection_create_lock);
+        port_targeted = true;
+        target_port = __builtin_bswap16(sockaddrpeer.sin_port);
+        pthread_cond_signal(&connection_create_cv);
+        pthread_mutex_unlock(&connection_create_lock);
+        char send_buffer[128] = {0};
+        ssize_t bread =
+            snprintf(send_buffer, 128, "sticksc name %s", getenv("USERNAME"));
+        if (bread == -1) {
+          // ERROR
+          continue;
+        }
+        ssize_t bsent = send(connect_socket_fd, send_buffer, 128, 0);
+        if (bsent == -1) {
+          // ERROR
+          continue;
+        }
       }
-      strlcpy(target_opp_name, name, 64);
-      pthread_mutex_lock(&connection_create_lock);
-      pthread_cond_signal(&connection_create_cv);
-      pthread_mutex_unlock(&connection_create_lock);
     } else if (!strcmp(op, "get-state")) {
       pthread_mutex_lock(&turn_lock);
       pthread_cond_wait(&turn_cv, &turn_lock);
       pthread_mutex_unlock(&turn_lock);
+      if (game_err_status) {
+        // ERROR
+        break;
+      }
       game_state game_ste = get_compressed_game_state();
       if (!game_ste) {
         // ERROR
+        continue;
       }
       // send game state to client process
     } else if (!strcmp(op, "send-state")) {
+      char *state = strtok(NULL, " ");
+      if (!state) {
+        // ERROR
+        continue;
+      }
       pthread_mutex_lock(&turn_lock);
       pthread_cond_signal(&turn_cv);
       pthread_mutex_unlock(&turn_lock);
     } else {
-      // figure out how to handle input error properly later
-      // fatal?
-      break;
+      continue;
     }
   }
 
   // cleanup?
+  close(socket_listen_fd);
 
   return EXIT_SUCCESS;
 }
@@ -212,6 +296,7 @@ void turn_await() {
     pthread_mutex_lock(&turn_lock);
     pthread_cond_wait(&turn_cv, &turn_lock);
     pthread_mutex_unlock(&turn_lock);
+    // decompress game state
   } else {
     // send get-state request; handles blocking
     // for client thread
@@ -223,6 +308,7 @@ void turn_complete(int err) {
     pthread_mutex_lock(&turn_lock);
     int game_err_status = err;
     pthread_cond_signal(&turn_cv);
+    // signals client get-state request
     pthread_mutex_unlock(&turn_lock);
   } else {
     // send send-state request; handles signaling
