@@ -1,5 +1,6 @@
 #include "server.h"
 #include "error.h"
+#include "game.h"
 #include <netinet/ip.h>
 #include <pthread.h>
 #include <stdbool.h>
@@ -16,6 +17,7 @@ pthread_mutex_t connection_create_lock;
 pthread_cond_t connection_create_cv;
 pthread_mutex_t turn_lock;
 pthread_cond_t turn_cv;
+bool server_hosting;
 
 bool port_active = false;
 uint16_t active_port;
@@ -23,7 +25,9 @@ bool port_targeted = false;
 uint16_t target_port;
 char target_opp_name[64];
 
-int server_init(uint16_t port) {
+int game_err_status = 0;
+
+int server_init(uint16_t host_port, uint16_t connect_port, bool hosting) {
   printf("starting server\n");
 
   pthread_mutex_init(&server_create_lock, NULL);
@@ -35,44 +39,49 @@ int server_init(uint16_t port) {
 
   pthread_mutex_lock(&server_create_lock);
 
+  server_hosting = hosting;
   // create server
-  active_port = port;
+  if (hosting) {
+    active_port = host_port;
+    int thread_create_err =
+        pthread_create(&server_thread, NULL, &server_run, NULL);
 
-  int thread_create_err =
-      pthread_create(&server_thread, NULL, &server_run, NULL);
+    if (thread_create_err) {
+      pthread_mutex_unlock(&server_create_lock);
+      return THREAD_CREATE_ERROR;
+    }
 
-  if (thread_create_err) {
+    pthread_cond_wait(&server_create_cv, &server_create_lock);
+
+    if (!port_active) {
+      pthread_mutex_unlock(&server_create_lock);
+      return SERVER_CREATE_ERROR;
+    }
+
     pthread_mutex_unlock(&server_create_lock);
-    return THREAD_CREATE_ERROR;
+  } else {
+    // create server connection to listen to other server
+    int connection_init_err = 0;
+    char *name = connection_init(host_port, connect_port, &connection_init_err);
+    if (connection_init_err) {
+      return CONNECTION_CREATE_ERROR;
+    }
   }
-
-  pthread_cond_wait(&server_create_cv, &server_create_lock);
-
-  if (!port_active) {
-    pthread_mutex_unlock(&server_create_lock);
-    return SERVER_CREATE_ERROR;
-  }
-
-  pthread_mutex_unlock(&server_create_lock);
 
   return EXIT_SUCCESS;
 }
 
-char *connection_init(uint16_t port) {
+char *connection_init(uint16_t host_port, uint16_t connect_port, int *err) {
   pthread_mutex_lock(&connection_create_lock);
-  char *opp_name = malloc(64);
 
-  if (!opp_name) {
-    return NULL;
-  }
-
-  target_port = port;
+  active_port = connect_port;
+  target_port = host_port;
   port_targeted = true;
 
-  strlcpy(opp_name, "nacliii", 64);
+  strlcpy(target_opp_name, "nacliii", 64);
 
   pthread_mutex_unlock(&connection_create_lock);
-  return opp_name;
+  return target_opp_name;
 }
 
 char *connection_wait() {
@@ -158,7 +167,9 @@ void *server_run(void *arg) {
       continue;
     }
 
-    if (!strcmp(op, "name")) {
+    if (!strcmp(op, "stop")) {
+      server_stop();
+    } else if (!strcmp(op, "name")) {
       char *name = strtok(NULL, " ");
       if (!name) {
         // figure out how to handle input error later
@@ -169,8 +180,19 @@ void *server_run(void *arg) {
       pthread_mutex_lock(&connection_create_lock);
       pthread_cond_signal(&connection_create_cv);
       pthread_mutex_unlock(&connection_create_lock);
-    } else if (!strcmp(op, "state")) {
-
+    } else if (!strcmp(op, "get-state")) {
+      pthread_mutex_lock(&turn_lock);
+      pthread_cond_wait(&turn_cv, &turn_lock);
+      pthread_mutex_unlock(&turn_lock);
+      game_state game_ste = get_compressed_game_state();
+      if (!game_ste) {
+        // ERROR
+      }
+      // send game state to client process
+    } else if (!strcmp(op, "send-state")) {
+      pthread_mutex_lock(&turn_lock);
+      pthread_cond_signal(&turn_cv);
+      pthread_mutex_unlock(&turn_lock);
     } else {
       // figure out how to handle input error properly later
       // fatal?
@@ -184,3 +206,26 @@ void *server_run(void *arg) {
 }
 
 void server_stop() { port_active = false; }
+
+void turn_await() {
+  if (server_hosting) {
+    pthread_mutex_lock(&turn_lock);
+    pthread_cond_wait(&turn_cv, &turn_lock);
+    pthread_mutex_unlock(&turn_lock);
+  } else {
+    // send get-state request; handles blocking
+    // for client thread
+  }
+}
+
+void turn_complete(int err) {
+  if (server_hosting) {
+    pthread_mutex_lock(&turn_lock);
+    int game_err_status = err;
+    pthread_cond_signal(&turn_cv);
+    pthread_mutex_unlock(&turn_lock);
+  } else {
+    // send send-state request; handles signaling
+    // host thread
+  }
+}

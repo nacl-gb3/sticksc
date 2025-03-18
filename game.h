@@ -1,6 +1,7 @@
 #ifndef STICKSC_GAME
 #define STICKSC_GAME
 
+#include <stdbool.h>
 #include <stdint.h>
 
 #define DEFAULT_PLAYER {1, 1}
@@ -14,12 +15,13 @@ struct player {
 
 typedef uint32_t game_state;
 
-int play_game(struct player *you, struct player *opp);
+int play_game(struct player *you, struct player *opp, bool hosting);
 int get_action(struct player *off, struct player *tgt);
 int attack(struct player *off, struct player *tgt);
 int split(struct player *off);
 
 void print_game_state(struct player *you, struct player *opp);
-game_state compress_game_state(struct player *you, struct player *opp);
+void compress_game_state(struct player *you, struct player *opp);
+game_state get_compressed_game_state();
 
 #endif /* ifdef ndef STICKSC_GAME */

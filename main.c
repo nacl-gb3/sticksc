@@ -9,26 +9,27 @@
 static void help();
 
 int main(int argc, char **argv) {
-  printf("Testing main access\n");
-  if (argc < 2) {
+  if (argc < 3) {
     help();
     return EXIT_SUCCESS;
   }
 
   char *end;
 
-  long your_port, join_port;
-  your_port = strtol(argv[1], &end, 10);
-
-  if (end == argv[1]) {
+  bool hosting = false;
+  if (!strcmp(argv[1], "-h")) {
+    hosting = true;
+  } else if (strcmp(argv[1], "-j")) {
     help();
     return ARGS_ERROR;
-  }
+  } 
 
-  int server_init_err = server_init(your_port);
+  long your_port, join_port;
+  your_port = strtol(argv[2], &end, 10);
 
-  if (server_init_err) {
-    return server_init_err;
+  if (end == argv[2]) {
+    help();
+    return ARGS_ERROR;
   }
 
   char *your_name = getenv("USERNAME");
@@ -36,6 +37,13 @@ int main(int argc, char **argv) {
     return ENV_GET_ERROR;
   }
 
+  int server_init_err = server_init(your_port, join_port, hosting);
+
+  if (server_init_err) {
+    return server_init_err;
+  }
+
+  // TODO: Rewrite this arg parsing code
   char *opp_name;
   if (argc == 3) {
     join_port = strtol(argv[2], &end, 10);
@@ -43,8 +51,6 @@ int main(int argc, char **argv) {
       help();
       return ARGS_ERROR;
     }
-
-    opp_name = connection_init(join_port);
   } else {
     opp_name = connection_wait();
   }
@@ -59,11 +65,15 @@ int main(int argc, char **argv) {
   struct player opp = DEFAULT_PLAYER;
   strlcpy(opp.name, opp_name, 64);
 
-  int game_result = -(play_game(&you, &opp));
+  int game_result = -(play_game(&you, &opp, hosting));
 
   server_stop();
 
   return game_result;
 }
 
-static void help() { printf("Usage: sticksc [your port #] [join port #]"); }
+static void help() { 
+  printf("sticksc Usage: \n"); 
+  printf("Host: sticksc -h [your port #]\n"); 
+  printf("Join: sticksc -j [your port #] [join port #]"); 
+}
