@@ -230,7 +230,7 @@ void *server_run(void *arg) {
     } else if (!strcmp(op, "name")) {
       char *name = strtok(NULL, " ");
       if (name) {
-        strlcpy(target_opp_name, name, 64);
+        strncpy(target_opp_name, name, 64);
         target_opp_name[63] = '\0';
         pthread_mutex_lock(&connection_create_lock);
         port_targeted = true;
