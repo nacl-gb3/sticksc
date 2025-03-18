@@ -14,7 +14,7 @@ struct player {
 
 typedef uint32_t game_state;
 
-int play_game(char *your_name);
+int play_game(struct player *you, struct player *opp);
 int get_action(struct player *off, struct player *tgt);
 int attack(struct player *off, struct player *tgt);
 int split(struct player *off);

@@ -11,25 +11,19 @@ static bool char_is_valid_val(char c);
 static int split_is_valid(uint8_t old_left, uint8_t old_right, uint8_t new_left,
                           uint8_t new_right);
 
-int play_game(char *your_name) {
+int play_game(struct player *you, struct player *opp) {
   uint32_t turn_cnt = 0;
-
-  struct player you = DEFAULT_PLAYER;
-  strlcpy(you.name, your_name, 64);
-
-  struct player opp = DEFAULT_PLAYER;
-  strlcpy(opp.name, "nacliii", 64);
 
   struct player *winner = NULL;
   int action_err = 0;
 
   while (!winner) {
     if (!(turn_cnt % 2)) {
-      print_game_state(&you, &opp);
-      action_err = get_action(&you, &opp);
+      print_game_state(you, opp);
+      action_err = get_action(you, opp);
     } else {
-      print_game_state(&opp, &you);
-      action_err = get_action(&opp, &you);
+      print_game_state(opp, you);
+      action_err = get_action(opp, you);
     }
 
     if (action_err) {
@@ -37,10 +31,10 @@ int play_game(char *your_name) {
     }
 
     // Check if winner exists
-    if ((!you.left_cnt && !you.right_cnt)) {
-      winner = &opp;
-    } else if ((!opp.left_cnt && !opp.right_cnt)) {
-      winner = &you;
+    if ((!you->left_cnt && !you->right_cnt)) {
+      winner = opp;
+    } else if ((!opp->left_cnt && !opp->right_cnt)) {
+      winner = you;
     } else {
       ++turn_cnt;
     }

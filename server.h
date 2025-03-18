@@ -1,7 +1,12 @@
 #ifndef STICKSC_SERVER
 #define STICKSC_SERVER
 
-int server_init(void);
-int send_data(void);
+#include <stdint.h>
+
+int server_init(uint16_t port);
+char *connection_init(uint16_t port);
+char *connection_wait();
+void *server_run(void *arg);
+void server_stop();
 
 #endif /* ifndef STICKSC_SERVER */
