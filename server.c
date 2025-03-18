@@ -145,7 +145,8 @@ char *connection_init(uint16_t host_port, uint16_t connect_port, int *err) {
     close(target_sock_fd);
     return NULL;
   }
-  strlcpy(target_opp_name, name, 64);
+  strncpy(target_opp_name, name, 64);
+  target_opp_name[63] = '\0';
   port_targeted = true;
 
   return target_opp_name;
@@ -158,7 +159,7 @@ char *connection_wait() {
   return target_opp_name;
 }
 
-// TODO: BETTER ERROR CHECKING 
+// TODO: BETTER ERROR CHECKING
 void *server_run(void *arg) {
   (void)arg; // UNUSED
 
@@ -237,6 +238,7 @@ void *server_run(void *arg) {
       char *name = strtok(NULL, " ");
       if (name) {
         strlcpy(target_opp_name, name, 64);
+        target_opp_name[63] = '\0';
         pthread_mutex_lock(&connection_create_lock);
         port_targeted = true;
         target_port = __builtin_bswap16(sockaddrpeer.sin_port);

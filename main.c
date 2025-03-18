@@ -68,11 +68,14 @@ int main(int argc, char **argv) {
     return -CONNECTION_CREATE_ERROR;
   }
 
+  // gcc doesn't have strlcpy apparently
   struct player you = DEFAULT_PLAYER;
-  strlcpy(you.name, your_name, 64);
+  strncpy(you.name, your_name, 64);
+  you.name[63] = '\0';
 
   struct player opp = DEFAULT_PLAYER;
-  strlcpy(opp.name, opp_name, 64);
+  strncpy(opp.name, opp_name, 64);
+  opp.name[63] = '\0';
 
   int game_result = play_game(&you, &opp, hosting);
 

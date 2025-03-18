@@ -1,7 +1,7 @@
 program_name := sticksc
 
 CC := gcc
-C_FLAGS := -ggdb -Wall -Werror
+CC_FLAGS := -ggdb -Wall -Werror
 
 SRCS := main.c game.c server.c
 OBJS := $(SRCS:%.c=%.o)
