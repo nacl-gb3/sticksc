@@ -102,7 +102,7 @@ int connection_init(uint16_t host_port, uint16_t connect_port) {
   // test request - send name
   char send_buffer[128] = {0};
   ssize_t bread =
-      snprintf(send_buffer, 128, "sticksc name %s", getenv("USERNAME"));
+      snprintf(send_buffer, 128, "sticksc name %s", getenv("USER"));
   if (bread == -1) {
     close(target_sock_fd);
     return IO_ERROR;
@@ -261,7 +261,7 @@ void *server_run(void *arg) {
         pthread_mutex_unlock(&connection_create_lock);
         char send_buffer[128] = {0};
         ssize_t bread =
-            snprintf(send_buffer, 128, "sticksc name %s", getenv("USERNAME"));
+            snprintf(send_buffer, 128, "sticksc name %s", getenv("USER"));
         if (bread == -1) {
           // ERROR
           continue;
