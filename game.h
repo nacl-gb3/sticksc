@@ -13,7 +13,7 @@ struct player {
   char name[64];
 };
 
-typedef uint32_t game_state;
+typedef uint16_t game_state;
 
 int play_game(struct player *you, struct player *opp, bool hosting);
 int get_action(struct player *off, struct player *tgt);

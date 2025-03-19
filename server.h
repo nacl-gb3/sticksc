@@ -9,8 +9,9 @@ int connection_init(uint16_t host_port, uint16_t connect_port);
 char *connection_wait();
 void *server_run(void *arg);
 void server_stop();
+void server_wait_to_stop();
 
-void turn_await();
+int turn_await();
 void turn_complete(int err);
 
 #endif /* ifndef STICKSC_SERVER */

@@ -48,14 +48,6 @@ int main(int argc, char **argv) {
     return -ENV_GET_ERROR;
   }
 
-  printf("hosting: %d\n", hosting);
-  printf("your port: %ld\n", your_port);
-  if (!hosting)
-    printf("join port: %ld\n", join_port);
-  printf("Welcome to sticksc, %s\n", your_name);
-
-  return -NOT_IMPLEMENTED;
-
   int server_init_err = server_init(your_port, join_port, hosting);
 
   if (server_init_err) {
@@ -68,6 +60,8 @@ int main(int argc, char **argv) {
     return -CONNECTION_CREATE_ERROR;
   }
 
+  return -NOT_IMPLEMENTED;
+
   // gcc doesn't have strlcpy apparently
   struct player you = DEFAULT_PLAYER;
   strncpy(you.name, your_name, 64);
@@ -79,6 +73,7 @@ int main(int argc, char **argv) {
 
   int game_result = play_game(&you, &opp, hosting);
 
+  server_wait_to_stop();
   server_stop();
 
   return -game_result;

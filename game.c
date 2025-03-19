@@ -11,7 +11,7 @@ static bool char_is_valid_val(char c);
 static int split_is_valid(uint8_t old_left, uint8_t old_right, uint8_t new_left,
                           uint8_t new_right);
 
-game_state game_ste = 0;
+game_state game_ste = 0x1111;
 
 int play_game(struct player *you, struct player *opp, bool hosting) {
   uint32_t turn_cnt = 0;
@@ -26,11 +26,11 @@ int play_game(struct player *you, struct player *opp, bool hosting) {
     if (!(turn_cnt % 2)) {
       print_game_state(you, opp);
       action_err = get_action(you, opp);
-      // turn_complete();
+      compress_game_state(you, opp);
+      turn_complete(action_err);
     } else {
-      print_game_state(opp, you);
-      action_err = get_action(opp, you);
-      // turn_await();
+      action_err = turn_await();
+      decompress_game_state(you, opp);
     }
 
     if (action_err) {
@@ -242,11 +242,11 @@ void compress_game_state(struct player *you, struct player *opp) {
   // Opp Left
   game_ste |= (game_state)opp->left_cnt;
   // Opp Right
-  game_ste |= ((game_state)opp->right_cnt) << 8;
+  game_ste |= ((game_state)opp->right_cnt) << 4;
   // You Left
-  game_ste |= ((game_state)you->left_cnt) << 16;
+  game_ste |= ((game_state)you->left_cnt) << 8;
   // You Right
-  game_ste |= ((game_state)you->right_cnt) << 24;
+  game_ste |= ((game_state)you->right_cnt) << 16;
 
 }
 
@@ -256,10 +256,10 @@ void decompress_game_state(struct player *you, struct player *opp) {
   // Byte 2: You Right
   // Byte 3: Opp Left
   // Byte 4: Opp Right
-  you->left_cnt = game_ste & 0xFF;
-  you->right_cnt = (game_ste >> 8) & 0xFF;
-  opp->left_cnt = (game_ste >> 16) & 0xFF;;
-  opp->right_cnt = (game_ste >> 24) & 0xFF;;
+  you->left_cnt = game_ste & 0xF;
+  you->right_cnt = (game_ste >> 4) & 0xF;
+  opp->left_cnt = (game_ste >> 8) & 0xF;;
+  opp->right_cnt = (game_ste >> 12) & 0xF;;
 }
 
 game_state get_compressed_game_state() {

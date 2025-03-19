@@ -14,16 +14,19 @@
 pthread_t server_thread;
 
 pthread_mutex_t server_create_lock;
+bool port_active = false;
 pthread_cond_t server_create_cv;
 pthread_mutex_t connection_create_lock;
+bool port_targeted = false;
 pthread_cond_t connection_create_cv;
 pthread_mutex_t turn_lock;
+bool turn_completed;
 pthread_cond_t turn_cv;
+pthread_mutex_t server_stop_lock;
+pthread_cond_t server_stop_cv;
 bool server_hosting;
 
-bool port_active = false;
 uint16_t active_port;
-bool port_targeted = false;
 uint16_t target_port;
 int target_sock_fd;
 char target_opp_name[64];
@@ -39,6 +42,8 @@ int server_init(uint16_t host_port, uint16_t connect_port, bool hosting) {
   pthread_cond_init(&connection_create_cv, NULL);
   pthread_mutex_init(&turn_lock, NULL);
   pthread_cond_init(&turn_cv, NULL);
+  pthread_mutex_init(&server_stop_lock, NULL);
+  pthread_cond_init(&server_stop_cv, NULL);
 
   pthread_mutex_lock(&server_create_lock);
 
@@ -97,7 +102,7 @@ int connection_init(uint16_t host_port, uint16_t connect_port) {
       snprintf(send_buffer, 128, "sticksc name %s", getenv("USERNAME"));
   if (bread == -1) {
     close(target_sock_fd);
-    return STDOUT_ERROR;
+    return IO_ERROR;
   }
 
   ssize_t bsent = send(target_sock_fd, send_buffer, 128, 0);
@@ -121,12 +126,7 @@ int connection_init(uint16_t host_port, uint16_t connect_port) {
 
   char *op = strtok(NULL, " ");
 
-  if (!op) {
-    close(target_sock_fd);
-    return CONNECTION_RECV_ERROR;
-  }
-
-  if (strcmp(op, "name")) {
+  if (!op || strcmp(op, "name")) {
     close(target_sock_fd);
     return CONNECTION_RECV_ERROR;
   }
@@ -211,12 +211,14 @@ void *server_run(void *arg) {
     char recv_buffer[128] = {0};
     ssize_t bread = recv(connect_socket_fd, recv_buffer, 128, 0);
     if (bread == -1) {
+      close(connect_socket_fd);
       connect_socket_fd = -1;
       continue;
     }
 
     char *source = strtok(recv_buffer, " ");
     if (!source || strcmp(source, "sticksc")) {
+      close(connect_socket_fd);
       connect_socket_fd = -1;
       continue;
     }
@@ -254,18 +256,30 @@ void *server_run(void *arg) {
       }
     } else if (!strcmp(op, "get-state")) {
       pthread_mutex_lock(&turn_lock);
-      pthread_cond_wait(&turn_cv, &turn_lock);
+      while (!turn_completed) {
+        pthread_cond_wait(&turn_cv, &turn_lock);
+      }
+      turn_completed = false;
       pthread_mutex_unlock(&turn_lock);
       if (game_err_status) {
         // ERROR
         break;
       }
+      // send game state to client process
+      char send_buffer[128] = {0};
       game_state game_ste = get_compressed_game_state();
-      if (!game_ste) {
+      bread = snprintf(send_buffer, 128, "sticksc get-state %x", game_ste);
+      if (bread == -1) {
         // ERROR
         continue;
       }
-      // send game state to client process
+
+      ssize_t bsent = send(connect_socket_fd, send_buffer, 128, 0);
+      if (bsent == -1) {
+        // handle error better
+        // ERROR
+        continue;
+      }
     } else if (!strcmp(op, "send-state")) {
       // receive game state from client process
       char *state = strtok(NULL, " ");
@@ -274,44 +288,150 @@ void *server_run(void *arg) {
         continue;
       }
       // convert state string to integer (base 16?)
-      set_compressed_game_state(0);
+      char *end;
+      game_state game_ste = 0;
+      game_ste = (game_state)strtol(state, &end, 16);
+      if (end == state) {
+        continue;
+      }
+      set_compressed_game_state(game_ste);
+
       pthread_mutex_lock(&turn_lock);
+      turn_completed = true;
       pthread_cond_signal(&turn_cv);
       pthread_mutex_unlock(&turn_lock);
     } else {
+      // ERROR
       continue;
     }
   }
 
   // cleanup?
   close(socket_listen_fd);
+  if (connect_socket_fd != -1) {
+    close(connect_socket_fd);
+  }
 
   return EXIT_SUCCESS;
 }
 
-void server_stop() { port_active = false; }
+void server_stop() {
+  if (server_hosting && port_active) {
+    port_active = false;
+  } else if (!server_hosting) {
+    close(target_sock_fd);
+    // send message to make server stop
+    char send_buffer[128] = {0};
+    ssize_t bread = snprintf(send_buffer, 128, "sticksc stop");
+    if (bread == -1) {
+      return;
+    }
 
-void turn_await() {
+    ssize_t bsent = send(target_sock_fd, send_buffer, 128, 0);
+    if (bsent == -1) {
+      return;
+    }
+  }
+}
+
+void server_wait_to_stop() {
+  if (server_hosting) {
+    pthread_mutex_lock(&server_stop_lock);
+    pthread_cond_wait(&server_stop_cv, &server_stop_lock);
+    pthread_mutex_unlock(&server_stop_lock);
+  }
+}
+
+int turn_await() {
+  printf("Waiting for opponent...");
   if (server_hosting) {
     pthread_mutex_lock(&turn_lock);
-    pthread_cond_wait(&turn_cv, &turn_lock);
+    while (!turn_completed) {
+      pthread_cond_wait(&turn_cv, &turn_lock);
+    }
+    turn_completed = false;
     pthread_mutex_unlock(&turn_lock);
     // decompress game state
   } else {
     // send get-state request; handles blocking
     // for client thread
+    // if error is returned, close fd and update game_err_status
+    char send_buffer[128] = {0};
+    ssize_t bread = snprintf(send_buffer, 128, "sticksc get-state");
+    if (bread == -1) {
+      return IO_ERROR;
+    }
+
+    ssize_t bsent = send(target_sock_fd, send_buffer, 128, 0);
+    if (bsent == -1) {
+      return CONNECTION_SEND_ERROR;
+    }
+
+    // receive state
+    char recv_buffer[128] = {0};
+    bread = recv(target_sock_fd, recv_buffer, 128, 0);
+    if (bread == -1) {
+      return CONNECTION_RECV_ERROR;
+    }
+
+    char *source = strtok(recv_buffer, " ");
+    if (!source || strcmp(source, "sticksc")) {
+      return CONNECTION_RECV_ERROR;
+    }
+
+    char *op = strtok(NULL, " ");
+
+    if (!op || strcmp(op, "send-state")) {
+      return CONNECTION_RECV_ERROR;
+    }
+
+    // receive game state from client process
+    char *state = strtok(NULL, " ");
+    if (!state) {
+      // ERROR
+      return IO_ERROR;
+    }
+    char *end;
+    game_state game_ste = 0;
+    game_ste = (game_state)strtol(state, &end, 16);
+    if (end == state) {
+      return IO_ERROR;
+    }
+    set_compressed_game_state(game_ste);
   }
+
+  return game_err_status;
 }
 
 void turn_complete(int err) {
   if (server_hosting) {
     pthread_mutex_lock(&turn_lock);
     game_err_status = err;
+    turn_completed = true;
     pthread_cond_signal(&turn_cv);
     // signals client get-state request
     pthread_mutex_unlock(&turn_lock);
   } else {
+    char send_buffer[128] = {0};
+    ssize_t bread;
+
+    if (err) {
+      bread = snprintf(send_buffer, 128, "sticksc err %d", err);
+    } else {
+      game_state game_ste = get_compressed_game_state();
+      bread = snprintf(send_buffer, 128, "sticksc send-state %x", game_ste);
+    }
     // send send-state request; handles signaling
     // host thread
+    if (bread == -1) {
+      // handle error better
+      return;
+    }
+
+    ssize_t bsent = send(target_sock_fd, send_buffer, 128, 0);
+    if (bsent == -1) {
+      // handle error better
+      return;
+    }
   }
 }
