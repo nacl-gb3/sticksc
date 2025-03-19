@@ -56,6 +56,8 @@ int main(int argc, char **argv) {
 
   char *opp_name = connection_wait();
 
+  printf("opp name: %s\n", opp_name);
+
   if (!opp_name) {
     return -CONNECTION_CREATE_ERROR;
   }

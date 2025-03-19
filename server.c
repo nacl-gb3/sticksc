@@ -148,8 +148,6 @@ int connection_init(uint16_t host_port, uint16_t connect_port) {
   target_opp_name[63] = '\0';
   port_targeted = true;
 
-  printf("opp name: %s\n", target_opp_name);
-
   return EXIT_SUCCESS;
 }
 
