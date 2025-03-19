@@ -84,6 +84,7 @@ int get_action(struct player *off, struct player *tgt) {
         split_err = split(off);
         free(line);
         if (split_err > 0) {
+          line = NULL;
           continue;
         }
         return split_err;
