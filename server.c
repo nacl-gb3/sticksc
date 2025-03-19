@@ -101,8 +101,7 @@ int connection_init(uint16_t host_port, uint16_t connect_port) {
   }
   // test request - send name
   char send_buffer[128] = {0};
-  ssize_t bread =
-      snprintf(send_buffer, 128, "sticksc name %s", getenv("USER"));
+  ssize_t bread = snprintf(send_buffer, 128, "sticksc name %s", getenv("USER"));
   if (bread == -1) {
     close(target_sock_fd);
     return IO_ERROR;
@@ -247,6 +246,9 @@ void *server_run(void *arg) {
 
     if (!strcmp(op, "stop")) {
       server_stop();
+      pthread_mutex_lock(&server_stop_lock);
+      pthread_cond_signal(&server_stop_cv);
+      pthread_mutex_unlock(&server_stop_lock);
     } else if (!strcmp(op, "name")) {
       char *name = strtok(NULL, " ");
       if (name) {
