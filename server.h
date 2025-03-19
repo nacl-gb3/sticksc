@@ -9,6 +9,7 @@ int connection_init(uint16_t host_port, uint16_t connect_port);
 char *connection_wait();
 void *server_run(void *arg);
 void server_stop();
+void server_halt();
 void server_wait_to_stop();
 
 int turn_await();

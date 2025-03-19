@@ -35,8 +35,6 @@ char target_opp_name[64];
 int game_err_status = 0;
 
 int server_init(uint16_t host_port, uint16_t connect_port, bool hosting) {
-  printf("starting server\n");
-
   pthread_mutex_init(&server_create_lock, NULL);
   pthread_cond_init(&server_create_cv, NULL);
   pthread_mutex_init(&connection_create_lock, NULL);
@@ -57,7 +55,8 @@ int server_init(uint16_t host_port, uint16_t connect_port, bool hosting) {
 
     if (thread_create_err) {
       pthread_mutex_unlock(&server_create_lock);
-      printf("Failed to create new thread\n");
+      printf("Failed to create new thread; errno: %s\n",
+             strerror(thread_create_err));
       return THREAD_CREATE_ERROR;
     }
 
@@ -97,13 +96,15 @@ int connection_init(uint16_t host_port, uint16_t connect_port) {
                             sizeof(struct sockaddr_in));
   if (connect_err) {
     close(target_sock_fd);
+    printf("failed to make connection; errno: %s\n", strerror(errno));
     return CONNECTION_CREATE_ERROR;
   }
   // test request - send name
   char send_buffer[128] = {0};
   ssize_t bread = snprintf(send_buffer, 128, "sticksc name %s", getenv("USER"));
-  if (bread == -1) {
+  if (bread < 0) {
     close(target_sock_fd);
+    printf("io got cooked; errno: %s\n", strerror(bread));
     return IO_ERROR;
   }
 
@@ -125,7 +126,7 @@ int connection_init(uint16_t host_port, uint16_t connect_port) {
   char *source = strtok(recv_buffer, " ");
   if (!source || strcmp(source, "sticksc")) {
     close(target_sock_fd);
-    printf("malformed query; returning error\n");
+    printf("malformed query (expected 'sticksc'); returning error\n");
     return CONNECTION_RECV_ERROR;
   }
 
@@ -133,14 +134,14 @@ int connection_init(uint16_t host_port, uint16_t connect_port) {
 
   if (!op || strcmp(op, "name")) {
     close(target_sock_fd);
-    printf("malformed query; returning error\n");
+    printf("malformed query (expected 'name'); returning error\n");
     return CONNECTION_RECV_ERROR;
   }
 
   char *name = strtok(NULL, " ");
   if (!name) {
     close(target_sock_fd);
-    printf("malformed query; returning error\n");
+    printf("malformed query (no name provided); returning error\n");
     return CONNECTION_RECV_ERROR;
   }
   strncpy(target_opp_name, name, 64);
@@ -233,7 +234,7 @@ void *server_run(void *arg) {
     char *source = strtok(recv_buffer, " ");
     if (!source || strcmp(source, "sticksc")) {
       close(connect_socket_fd);
-      printf("malformed query; destroying connection\n");
+      printf("malformed query (expected sticksc); destroying connection\n");
       connect_socket_fd = -1;
       continue;
     }
@@ -241,14 +242,16 @@ void *server_run(void *arg) {
     char *op = strtok(NULL, " ");
 
     if (!op) {
+      printf("malformed query (expected non null value); halting server\n");
+      server_halt();
       continue;
     }
 
     if (!strcmp(op, "stop")) {
-      server_stop();
-      pthread_mutex_lock(&server_stop_lock);
-      pthread_cond_signal(&server_stop_cv);
-      pthread_mutex_unlock(&server_stop_lock);
+      server_halt();
+    } else if (!strcmp(op, "err")) {
+      printf("client error occurred; halting server\n");
+      server_halt();
     } else if (!strcmp(op, "name")) {
       char *name = strtok(NULL, " ");
       if (name) {
@@ -262,14 +265,15 @@ void *server_run(void *arg) {
         char send_buffer[128] = {0};
         ssize_t bread =
             snprintf(send_buffer, 128, "sticksc name %s", getenv("USER"));
-        if (bread == -1) {
-          // ERROR
+        if (bread < 0) {
+          printf("could not print to buffer; halting server\n");
+          server_halt();
           continue;
         }
         ssize_t bsent = send(connect_socket_fd, send_buffer, 128, 0);
         if (bsent == -1) {
-          // ERROR
           printf("failed to send data; errno: %s\n", strerror(errno));
+          server_halt();
           continue;
         }
       }
@@ -279,7 +283,8 @@ void *server_run(void *arg) {
       turn_completed = false;
       pthread_mutex_unlock(&turn_lock);
       if (game_err_status) {
-        // ERROR
+        printf("game errored; halting server\n");
+        server_halt();
         break;
       }
       // send game state to client process
@@ -287,22 +292,23 @@ void *server_run(void *arg) {
       game_state game_ste = get_compressed_game_state();
       bread = snprintf(send_buffer, 128, "sticksc get-state %04x", game_ste);
       if (bread == -1) {
-        // ERROR
+        printf("could not print to buffer; halting server\n");
+        server_halt();
         continue;
       }
 
       ssize_t bsent = send(connect_socket_fd, send_buffer, 128, 0);
       if (bsent == -1) {
-        // handle error better
-        // ERROR
         printf("failed to send data; errno: %s\n", strerror(errno));
+        server_halt();
         continue;
       }
     } else if (!strcmp(op, "send-state")) {
       // receive game state from client process
       char *state = strtok(NULL, " ");
       if (!state) {
-        // ERROR
+        printf("malformed query (no state provided); halting server\n");
+        server_halt();
         continue;
       }
       // convert state string to integer (base 16?)
@@ -319,7 +325,8 @@ void *server_run(void *arg) {
       pthread_cond_signal(&turn_cv);
       pthread_mutex_unlock(&turn_lock);
     } else {
-      // ERROR
+      printf("malformed query (invalid option); halting server\n");
+      server_halt();
       continue;
     }
   }
@@ -357,11 +364,18 @@ void server_stop() {
 }
 
 void server_wait_to_stop() {
-  if (server_hosting) {
+  if (server_hosting && port_active) {
     pthread_mutex_lock(&server_stop_lock);
     pthread_cond_wait(&server_stop_cv, &server_stop_lock);
     pthread_mutex_unlock(&server_stop_lock);
   }
+}
+
+void server_halt() {
+  server_stop();
+  pthread_mutex_lock(&server_stop_lock);
+  pthread_cond_signal(&server_stop_cv);
+  pthread_mutex_unlock(&server_stop_lock);
 }
 
 int turn_await() {
@@ -398,27 +412,28 @@ int turn_await() {
 
     char *source = strtok(recv_buffer, " ");
     if (!source || strcmp(source, "sticksc")) {
-      printf("malformed query; returning error\n");
+      printf("malformed query (expected 'sticksc'); returning error\n");
       return CONNECTION_RECV_ERROR;
     }
 
     char *op = strtok(NULL, " ");
 
     if (!op || strcmp(op, "get-state")) {
-      printf("malformed query; returning error\n");
+      printf("malformed query (invalid operation); returning error\n");
       return CONNECTION_RECV_ERROR;
     }
 
     // receive game state from client process
     char *state = strtok(NULL, " ");
     if (!state) {
-      // ERROR
-      return IO_ERROR;
+      printf("malformed query (no state provided); returning error\n");
+      return CONNECTION_RECV_ERROR;
     }
     char *end;
     game_state game_ste = 0;
     game_ste = (game_state)strtol(state, &end, 16);
     if (end == state) {
+      printf("malformed query (state not a number); returning error\n");
       return IO_ERROR;
     }
     set_compressed_game_state(game_ste);
@@ -448,13 +463,12 @@ void turn_complete(int err) {
     // send send-state request; handles signaling
     // host thread
     if (bread == -1) {
-      // handle error better
+      printf("could not print to buffer; returning\n");
       return;
     }
 
     ssize_t bsent = send(target_sock_fd, send_buffer, 128, 0);
     if (bsent == -1) {
-      // handle error better
       printf("failed to send data; errno: %s\n", strerror(errno));
       return;
     }
