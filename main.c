@@ -60,8 +60,6 @@ int main(int argc, char **argv) {
     return -CONNECTION_CREATE_ERROR;
   }
 
-  return -NOT_IMPLEMENTED;
-
   // gcc doesn't have strlcpy apparently
   struct player you = DEFAULT_PLAYER;
   strncpy(you.name, your_name, 64);
@@ -82,5 +80,5 @@ int main(int argc, char **argv) {
 static void help() {
   printf("sticksc Usage: \n");
   printf("Host: sticksc -h [your port #]\n");
-  printf("Join: sticksc -j [your port #] [join port #]\n");
+  printf("Join: sticksc -j [join port #] [your port #]\n");
 }

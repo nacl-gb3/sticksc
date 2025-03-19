@@ -1,7 +1,8 @@
 #include "server.h"
 #include "error.h"
 #include "game.h"
-#include "netinet/in.h"
+#include <errno.h>
+#include <netinet/in.h>
 #include <netinet/ip.h>
 #include <pthread.h>
 #include <stdbool.h>
@@ -20,11 +21,11 @@ pthread_mutex_t connection_create_lock;
 bool port_targeted = false;
 pthread_cond_t connection_create_cv;
 pthread_mutex_t turn_lock;
-bool turn_completed;
+bool turn_completed = false;
 pthread_cond_t turn_cv;
 pthread_mutex_t server_stop_lock;
 pthread_cond_t server_stop_cv;
-bool server_hosting;
+bool server_hosting = false;
 
 uint16_t active_port;
 uint16_t target_port;
@@ -56,6 +57,7 @@ int server_init(uint16_t host_port, uint16_t connect_port, bool hosting) {
 
     if (thread_create_err) {
       pthread_mutex_unlock(&server_create_lock);
+      printf("Failed to create new thread\n");
       return THREAD_CREATE_ERROR;
     }
 
@@ -63,6 +65,7 @@ int server_init(uint16_t host_port, uint16_t connect_port, bool hosting) {
 
     if (!port_active) {
       pthread_mutex_unlock(&server_create_lock);
+      printf("Server failed to initialize\n");
       return SERVER_CREATE_ERROR;
     }
 
@@ -84,9 +87,10 @@ int connection_init(uint16_t host_port, uint16_t connect_port) {
   target_port = host_port;
 
   uint16_t be_targ_port = __builtin_bswap16(target_port);
-  struct sockaddr_in sockaddrtarg = {.sin_family = AF_INET,
-                                     .sin_port = be_targ_port,
-                                     .sin_addr = {.s_addr = INADDR_LOOPBACK}};
+  struct sockaddr_in sockaddrtarg = {
+      .sin_family = AF_INET,
+      .sin_port = be_targ_port,
+      .sin_addr = {.s_addr = htonl(INADDR_LOOPBACK)}};
 
   target_sock_fd = socket(AF_INET, SOCK_STREAM, 0);
   int connect_err = connect(target_sock_fd, (struct sockaddr *)&sockaddrtarg,
@@ -95,8 +99,7 @@ int connection_init(uint16_t host_port, uint16_t connect_port) {
     close(target_sock_fd);
     return CONNECTION_CREATE_ERROR;
   }
-
-  // test request - get name of opponent
+  // test request - send name
   char send_buffer[128] = {0};
   ssize_t bread =
       snprintf(send_buffer, 128, "sticksc name %s", getenv("USERNAME"));
@@ -108,6 +111,7 @@ int connection_init(uint16_t host_port, uint16_t connect_port) {
   ssize_t bsent = send(target_sock_fd, send_buffer, 128, 0);
   if (bsent == -1) {
     close(target_sock_fd);
+    printf("failed to send data; errno: %s\n", strerror(errno));
     return CONNECTION_SEND_ERROR;
   }
 
@@ -115,12 +119,14 @@ int connection_init(uint16_t host_port, uint16_t connect_port) {
   bread = recv(target_sock_fd, recv_buffer, 128, 0);
   if (bread == -1) {
     close(target_sock_fd);
+    printf("failed to receive data; errno: %s\n", strerror(errno));
     return CONNECTION_RECV_ERROR;
   }
 
   char *source = strtok(recv_buffer, " ");
   if (!source || strcmp(source, "sticksc")) {
     close(target_sock_fd);
+    printf("malformed query; returning error\n");
     return CONNECTION_RECV_ERROR;
   }
 
@@ -128,17 +134,21 @@ int connection_init(uint16_t host_port, uint16_t connect_port) {
 
   if (!op || strcmp(op, "name")) {
     close(target_sock_fd);
+    printf("malformed query; returning error\n");
     return CONNECTION_RECV_ERROR;
   }
 
   char *name = strtok(NULL, " ");
   if (!name) {
     close(target_sock_fd);
+    printf("malformed query; returning error\n");
     return CONNECTION_RECV_ERROR;
   }
   strncpy(target_opp_name, name, 64);
   target_opp_name[63] = '\0';
   port_targeted = true;
+
+  printf("opp name: %s\n", target_opp_name);
 
   return EXIT_SUCCESS;
 }
@@ -161,14 +171,16 @@ void *server_run(void *arg) {
   // create server
   uint16_t be_port = __builtin_bswap16(active_port);
 
-  struct sockaddr_in sockaddrin = {.sin_family = AF_INET,
-                                   .sin_port = be_port,
-                                   .sin_addr = {.s_addr = INADDR_LOOPBACK}};
+  struct sockaddr_in sockaddrin = {
+      .sin_family = AF_INET,
+      .sin_port = be_port,
+      .sin_addr = {.s_addr = htonl(INADDR_LOOPBACK)}};
 
   int socket_listen_fd = socket(AF_INET, SOCK_STREAM, 0);
   if (socket_listen_fd == -1) {
     pthread_cond_signal(&server_create_cv);
     pthread_mutex_unlock(&server_create_lock);
+    printf("Socket could not be created; errno: %s\n", strerror(errno));
     return (void *)SERVER_CREATE_ERROR;
   }
 
@@ -178,6 +190,7 @@ void *server_run(void *arg) {
     close(socket_listen_fd);
     pthread_cond_signal(&server_create_cv);
     pthread_mutex_unlock(&server_create_lock);
+    printf("Socket could not be bound; errno: %s\n", strerror(errno));
     return (void *)SERVER_CREATE_ERROR;
   }
 
@@ -186,6 +199,7 @@ void *server_run(void *arg) {
     close(socket_listen_fd);
     pthread_cond_signal(&server_create_cv);
     pthread_mutex_unlock(&server_create_lock);
+    printf("Socket failed to become listenable; errno: %s\n", strerror(errno));
     return (void *)SERVER_CREATE_ERROR;
   }
 
@@ -203,8 +217,10 @@ void *server_run(void *arg) {
   while (port_active) {
     if (connect_socket_fd == -1) {
       printf("Waiting for connection on port %d...\n", active_port);
-      connect_socket_fd = accept(
-          socket_listen_fd, (struct sockaddr *)&sockaddrpeer, &sockpeerlen);
+      while (connect_socket_fd == -1) {
+        connect_socket_fd = accept(
+            socket_listen_fd, (struct sockaddr *)&sockaddrpeer, &sockpeerlen);
+      }
     }
 
     // TODO: HANDLE COMMS ERRORS BETTER
@@ -212,6 +228,7 @@ void *server_run(void *arg) {
     ssize_t bread = recv(connect_socket_fd, recv_buffer, 128, 0);
     if (bread == -1) {
       close(connect_socket_fd);
+      printf("failed to receive data; errno: %s\n", strerror(errno));
       connect_socket_fd = -1;
       continue;
     }
@@ -219,6 +236,7 @@ void *server_run(void *arg) {
     char *source = strtok(recv_buffer, " ");
     if (!source || strcmp(source, "sticksc")) {
       close(connect_socket_fd);
+      printf("malformed query; destroying connection\n");
       connect_socket_fd = -1;
       continue;
     }
@@ -251,14 +269,13 @@ void *server_run(void *arg) {
         ssize_t bsent = send(connect_socket_fd, send_buffer, 128, 0);
         if (bsent == -1) {
           // ERROR
+          printf("failed to send data; errno: %s\n", strerror(errno));
           continue;
         }
       }
     } else if (!strcmp(op, "get-state")) {
       pthread_mutex_lock(&turn_lock);
-      while (!turn_completed) {
-        pthread_cond_wait(&turn_cv, &turn_lock);
-      }
+      pthread_cond_wait(&turn_cv, &turn_lock);
       turn_completed = false;
       pthread_mutex_unlock(&turn_lock);
       if (game_err_status) {
@@ -268,7 +285,7 @@ void *server_run(void *arg) {
       // send game state to client process
       char send_buffer[128] = {0};
       game_state game_ste = get_compressed_game_state();
-      bread = snprintf(send_buffer, 128, "sticksc get-state %x", game_ste);
+      bread = snprintf(send_buffer, 128, "sticksc get-state %04x", game_ste);
       if (bread == -1) {
         // ERROR
         continue;
@@ -278,6 +295,7 @@ void *server_run(void *arg) {
       if (bsent == -1) {
         // handle error better
         // ERROR
+        printf("failed to send data; errno: %s\n", strerror(errno));
         continue;
       }
     } else if (!strcmp(op, "send-state")) {
@@ -329,6 +347,7 @@ void server_stop() {
 
     ssize_t bsent = send(target_sock_fd, send_buffer, 128, 0);
     if (bsent == -1) {
+      printf("failed to send data; errno: %s\n", strerror(errno));
       return;
     }
   }
@@ -343,12 +362,10 @@ void server_wait_to_stop() {
 }
 
 int turn_await() {
-  printf("Waiting for opponent...");
+  printf("Waiting for opponent...\n");
   if (server_hosting) {
     pthread_mutex_lock(&turn_lock);
-    while (!turn_completed) {
-      pthread_cond_wait(&turn_cv, &turn_lock);
-    }
+    pthread_cond_wait(&turn_cv, &turn_lock);
     turn_completed = false;
     pthread_mutex_unlock(&turn_lock);
     // decompress game state
@@ -364,6 +381,7 @@ int turn_await() {
 
     ssize_t bsent = send(target_sock_fd, send_buffer, 128, 0);
     if (bsent == -1) {
+      printf("failed to send data; errno: %s\n", strerror(errno));
       return CONNECTION_SEND_ERROR;
     }
 
@@ -371,17 +389,22 @@ int turn_await() {
     char recv_buffer[128] = {0};
     bread = recv(target_sock_fd, recv_buffer, 128, 0);
     if (bread == -1) {
+      printf("failed to receive data; errno: %s\n", strerror(errno));
       return CONNECTION_RECV_ERROR;
     }
 
+    printf("client query: %s\n", recv_buffer);
+
     char *source = strtok(recv_buffer, " ");
     if (!source || strcmp(source, "sticksc")) {
+      printf("malformed query; returning error\n");
       return CONNECTION_RECV_ERROR;
     }
 
     char *op = strtok(NULL, " ");
 
-    if (!op || strcmp(op, "send-state")) {
+    if (!op || strcmp(op, "get-state")) {
+      printf("malformed query; returning error\n");
       return CONNECTION_RECV_ERROR;
     }
 
@@ -419,7 +442,7 @@ void turn_complete(int err) {
       bread = snprintf(send_buffer, 128, "sticksc err %d", err);
     } else {
       game_state game_ste = get_compressed_game_state();
-      bread = snprintf(send_buffer, 128, "sticksc send-state %x", game_ste);
+      bread = snprintf(send_buffer, 128, "sticksc send-state %04x", game_ste);
     }
     // send send-state request; handles signaling
     // host thread
@@ -431,6 +454,7 @@ void turn_complete(int err) {
     ssize_t bsent = send(target_sock_fd, send_buffer, 128, 0);
     if (bsent == -1) {
       // handle error better
+      printf("failed to send data; errno: %s\n", strerror(errno));
       return;
     }
   }
