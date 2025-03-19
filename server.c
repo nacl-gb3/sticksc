@@ -337,19 +337,22 @@ void server_stop() {
   if (server_hosting && port_active) {
     port_active = false;
   } else if (!server_hosting) {
-    close(target_sock_fd);
     // send message to make server stop
     char send_buffer[128] = {0};
     ssize_t bread = snprintf(send_buffer, 128, "sticksc stop");
     if (bread == -1) {
+      close(target_sock_fd);
       return;
     }
 
     ssize_t bsent = send(target_sock_fd, send_buffer, 128, 0);
     if (bsent == -1) {
       printf("failed to send data; errno: %s\n", strerror(errno));
+      close(target_sock_fd);
       return;
     }
+
+    close(target_sock_fd);
   }
 }
 
@@ -392,8 +395,6 @@ int turn_await() {
       printf("failed to receive data; errno: %s\n", strerror(errno));
       return CONNECTION_RECV_ERROR;
     }
-
-    printf("client query: %s\n", recv_buffer);
 
     char *source = strtok(recv_buffer, " ");
     if (!source || strcmp(source, "sticksc")) {

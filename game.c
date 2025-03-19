@@ -206,6 +206,7 @@ int split(struct player *off) {
                              (hand_sum - new_left) % MAX_HAND_CNT)) {
       case 0:
         new_right = (hand_sum - new_left) % MAX_HAND_CNT;
+        break;
       case 1:
         printf("DIRECT SWAPS NOT PERMITTED; PLEASE TRY AGAIN\n");
         break;
@@ -246,8 +247,9 @@ void compress_game_state(struct player *you, struct player *opp) {
   // You Left
   game_ste |= ((game_state)you->left_cnt) << 8;
   // You Right
-  game_ste |= ((game_state)you->right_cnt) << 16;
+  game_ste |= ((game_state)you->right_cnt) << 12;
 
+  // printf("compressed game state: %04x\n", game_ste);
 }
 
 void decompress_game_state(struct player *you, struct player *opp) {
@@ -256,19 +258,18 @@ void decompress_game_state(struct player *you, struct player *opp) {
   // Byte 2: You Right
   // Byte 3: Opp Left
   // Byte 4: Opp Right
+
+  // printf("compressed game state: %04x\n", game_ste);
+
   you->left_cnt = game_ste & 0xF;
   you->right_cnt = (game_ste >> 4) & 0xF;
-  opp->left_cnt = (game_ste >> 8) & 0xF;;
-  opp->right_cnt = (game_ste >> 12) & 0xF;;
+  opp->left_cnt = (game_ste >> 8) & 0xF;
+  opp->right_cnt = (game_ste >> 12) & 0xF;
 }
 
-game_state get_compressed_game_state() {
-  return game_ste;
-}
+game_state get_compressed_game_state() { return game_ste; }
 
-void set_compressed_game_state(game_state new_ste) {
-  game_ste = new_ste;
-}
+void set_compressed_game_state(game_state new_ste) { game_ste = new_ste; }
 
 static bool char_is_valid_val(char c) { return (c >= '1' && c < '5'); }
 
