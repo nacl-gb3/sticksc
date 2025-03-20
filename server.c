@@ -119,7 +119,7 @@ int connection_init(uint16_t host_port) {
   char *source = strtok(recv_buffer, " ");
   if (!source || strcmp(source, "sticksc")) {
     close(target_sock_fd);
-    printf("malformed query (expected 'sticksc'); returning error\n");
+    printf("malformed request (expected 'sticksc'); returning error\n");
     return CONNECTION_RECV_ERROR;
   }
 
@@ -127,14 +127,14 @@ int connection_init(uint16_t host_port) {
 
   if (!op || strcmp(op, "name")) {
     close(target_sock_fd);
-    printf("malformed query (expected 'name'); returning error\n");
+    printf("malformed request (expected 'name'); returning error\n");
     return CONNECTION_RECV_ERROR;
   }
 
   char *name = strtok(NULL, " ");
   if (!name) {
     close(target_sock_fd);
-    printf("malformed query (no name provided); returning error\n");
+    printf("malformed request (no name provided); returning error\n");
     return CONNECTION_RECV_ERROR;
   }
   strncpy(target_opp_name, name, 64);
@@ -221,10 +221,10 @@ void *server_run(void *arg) {
     if (!source || strcmp(source, "sticksc")) {
       close(connect_socket_fd);
       if (!connection_valid) {
-        printf("malformed query (expected sticksc); destroying connection\n");
+        printf("malformed request (expected sticksc); destroying connection\n");
         connect_socket_fd = -1;
       } else {
-        printf("malformed query (expected sticksc); halting server\n");
+        printf("malformed request (expected sticksc); halting server\n");
         server_halt();
       }
       continue;
@@ -235,7 +235,7 @@ void *server_run(void *arg) {
     char *op = strtok(NULL, " ");
 
     if (!op) {
-      printf("malformed query (expected non null value); halting server\n");
+      printf("malformed request (expected non null value); halting server\n");
       server_halt();
       continue;
     }
@@ -299,7 +299,11 @@ void *server_run(void *arg) {
       // receive game state from client process
       char *state = strtok(NULL, " ");
       if (!state) {
-        printf("malformed query (no state provided); halting server\n");
+        printf("malformed request (no state provided); halting server\n");
+        server_halt();
+        continue;
+      } else if (strnlen(state, 5) != 4) {
+        printf("malformed request (expected 4 digit state); halting server\n");
         server_halt();
         continue;
       }
@@ -317,7 +321,7 @@ void *server_run(void *arg) {
       pthread_cond_signal(&turn_cv);
       pthread_mutex_unlock(&turn_lock);
     } else {
-      printf("malformed query (invalid option); halting server\n");
+      printf("malformed request (invalid option); halting server\n");
       server_halt();
       continue;
     }
@@ -404,28 +408,31 @@ int turn_await() {
 
     char *source = strtok(recv_buffer, " ");
     if (!source || strcmp(source, "sticksc")) {
-      printf("malformed query (expected 'sticksc'); returning error\n");
+      printf("malformed request (expected 'sticksc'); returning error\n");
       return CONNECTION_RECV_ERROR;
     }
 
     char *op = strtok(NULL, " ");
 
     if (!op || strcmp(op, "get-state")) {
-      printf("malformed query (invalid operation); returning error\n");
+      printf("malformed request (invalid operation); returning error\n");
       return CONNECTION_RECV_ERROR;
     }
 
     // receive game state from client process
     char *state = strtok(NULL, " ");
     if (!state) {
-      printf("malformed query (no state provided); returning error\n");
+      printf("malformed request (no state provided); returning error\n");
+      return CONNECTION_RECV_ERROR;
+    } else if (strnlen(state, 5) != 4) {
+      printf("malformed request (expected 4 digit state); returning error\n");
       return CONNECTION_RECV_ERROR;
     }
     char *end;
     game_state game_ste = 0;
     game_ste = (game_state)strtol(state, &end, 16);
     if (end == state) {
-      printf("malformed query (state not a number); returning error\n");
+      printf("malformed request (state not a number); returning error\n");
       return IO_ERROR;
     }
     set_compressed_game_state(game_ste);
