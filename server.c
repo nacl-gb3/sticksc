@@ -28,14 +28,12 @@ pthread_mutex_t server_stop_lock;
 pthread_cond_t server_stop_cv;
 bool server_hosting = false;
 
-uint16_t active_port;
-uint16_t target_port;
 int target_sock_fd;
 char target_opp_name[64];
 
 int game_err_status = 0;
 
-int server_init(uint16_t host_port, uint16_t connect_port, bool hosting) {
+int server_init(uint16_t host_port, bool hosting) {
   pthread_mutex_init(&server_create_lock, NULL);
   pthread_cond_init(&server_create_cv, NULL);
   pthread_mutex_init(&connection_create_lock, NULL);
@@ -50,9 +48,8 @@ int server_init(uint16_t host_port, uint16_t connect_port, bool hosting) {
   server_hosting = hosting;
   // create server
   if (hosting) {
-    active_port = host_port;
     int thread_create_err =
-        pthread_create(&server_thread, NULL, &server_run, NULL);
+        pthread_create(&server_thread, NULL, &server_run, (void *)&host_port);
 
     if (thread_create_err) {
       pthread_mutex_unlock(&server_create_lock);
@@ -72,7 +69,7 @@ int server_init(uint16_t host_port, uint16_t connect_port, bool hosting) {
     pthread_mutex_unlock(&server_create_lock);
   } else {
     // create server connection to listen to other server
-    int connection_init_err = connection_init(host_port, connect_port);
+    int connection_init_err = connection_init(host_port);
     if (connection_init_err) {
       return connection_init_err;
     }
@@ -81,15 +78,10 @@ int server_init(uint16_t host_port, uint16_t connect_port, bool hosting) {
   return EXIT_SUCCESS;
 }
 
-int connection_init(uint16_t host_port, uint16_t connect_port) {
-
-  active_port = connect_port;
-  target_port = host_port;
-
-  uint16_t be_targ_port = __builtin_bswap16(target_port);
+int connection_init(uint16_t host_port) {
   struct sockaddr_in sockaddrtarg = {
       .sin_family = AF_INET,
-      .sin_port = be_targ_port,
+      .sin_port = htons(host_port),
       .sin_addr = {.s_addr = htonl(INADDR_LOOPBACK)}};
 
   target_sock_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -161,18 +153,15 @@ char *connection_wait() {
   return target_opp_name;
 }
 
-// TODO: BETTER ERROR CHECKING
 void *server_run(void *arg) {
-  (void)arg; // UNUSED
+  uint16_t host_port = *((uint16_t *)arg);
 
   pthread_mutex_lock(&server_create_lock);
 
   // create server
-  uint16_t be_port = __builtin_bswap16(active_port);
-
   struct sockaddr_in sockaddrin = {
       .sin_family = AF_INET,
-      .sin_port = be_port,
+      .sin_port = htons(host_port),
       .sin_addr = {.s_addr = htonl(INADDR_LOOPBACK)}};
 
   int socket_listen_fd = socket(AF_INET, SOCK_STREAM, 0);
@@ -209,20 +198,16 @@ void *server_run(void *arg) {
   pthread_mutex_unlock(&server_create_lock);
 
   // listen for connections here
-  struct sockaddr_in sockaddrpeer;
-  socklen_t sockpeerlen = sizeof(struct sockaddr_in);
   int connect_socket_fd = -1;
 
   while (port_active) {
     if (connect_socket_fd == -1) {
-      printf("Waiting for connection on port %d...\n", active_port);
+      printf("Waiting for connection on port %d...\n", host_port);
       while (connect_socket_fd == -1) {
-        connect_socket_fd = accept(
-            socket_listen_fd, (struct sockaddr *)&sockaddrpeer, &sockpeerlen);
+        connect_socket_fd = accept(socket_listen_fd, NULL, NULL);
       }
     }
 
-    // TODO: HANDLE COMMS ERRORS BETTER
     char recv_buffer[128] = {0};
     ssize_t bread = recv(connect_socket_fd, recv_buffer, 128, 0);
     if (bread == -1) {
@@ -267,7 +252,6 @@ void *server_run(void *arg) {
         target_opp_name[63] = '\0';
         pthread_mutex_lock(&connection_create_lock);
         port_targeted = true;
-        target_port = __builtin_bswap16(sockaddrpeer.sin_port);
         pthread_cond_signal(&connection_create_cv);
         pthread_mutex_unlock(&connection_create_lock);
         char send_buffer[128] = {0};

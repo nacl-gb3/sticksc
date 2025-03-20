@@ -24,23 +24,11 @@ int main(int argc, char **argv) {
 
   char *end;
 
-  long your_port = 0, join_port = 0;
-  your_port = strtol(argv[2], &end, 10);
+  long host_port = 0;
+  host_port = strtol(argv[2], &end, 10);
   if (end == argv[2]) {
     help();
     return -ARGS_ERROR;
-  }
-
-  if (!hosting) {
-    if (argc < 4) {
-      help();
-      return -ARGS_ERROR;
-    }
-    join_port = strtol(argv[3], &end, 10);
-    if (end == argv[3]) {
-      help();
-      return -ARGS_ERROR;
-    }
   }
 
   char *your_name = getenv("USER");
@@ -48,7 +36,7 @@ int main(int argc, char **argv) {
     return -ENV_GET_ERROR;
   }
 
-  int server_init_err = server_init(your_port, join_port, hosting);
+  int server_init_err = server_init(host_port, hosting);
 
   if (server_init_err) {
     return -server_init_err;
@@ -81,6 +69,6 @@ int main(int argc, char **argv) {
 
 static void help() {
   printf("sticksc Usage: \n");
-  printf("Host: sticksc -h [your port #]\n");
-  printf("Join: sticksc -j [join port #] [your port #]\n");
+  printf("Host: sticksc -h [host port #]\n");
+  printf("Join: sticksc -j [host port #]\n");
 }
