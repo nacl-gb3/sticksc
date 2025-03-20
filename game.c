@@ -23,8 +23,8 @@ int play_game(struct player *you, struct player *opp, bool hosting) {
   int action_err = 0;
 
   while (!winner) {
+    print_game_state(you, opp);
     if (!(turn_cnt % 2)) {
-      print_game_state(you, opp);
       action_err = get_action(you, opp);
       compress_game_state(you, opp);
       turn_complete(action_err);

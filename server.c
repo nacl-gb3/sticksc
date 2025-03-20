@@ -19,6 +19,7 @@ bool port_active = false;
 pthread_cond_t server_create_cv;
 pthread_mutex_t connection_create_lock;
 bool port_targeted = false;
+bool connection_valid = false;
 pthread_cond_t connection_create_cv;
 pthread_mutex_t turn_lock;
 bool turn_completed = false;
@@ -234,10 +235,17 @@ void *server_run(void *arg) {
     char *source = strtok(recv_buffer, " ");
     if (!source || strcmp(source, "sticksc")) {
       close(connect_socket_fd);
-      printf("malformed query (expected sticksc); destroying connection\n");
-      connect_socket_fd = -1;
+      if (!connection_valid) {
+        printf("malformed query (expected sticksc); destroying connection\n");
+        connect_socket_fd = -1;
+      } else {
+        printf("malformed query (expected sticksc); halting server\n");
+        server_halt();
+      }
       continue;
     }
+
+    connection_valid = true;
 
     char *op = strtok(NULL, " ");
 
@@ -379,7 +387,7 @@ void server_halt() {
 }
 
 int turn_await() {
-  printf("Waiting for opponent...\n");
+  printf("Waiting for opponent's turn...\n");
   if (server_hosting) {
     pthread_mutex_lock(&turn_lock);
     pthread_cond_wait(&turn_cv, &turn_lock);
