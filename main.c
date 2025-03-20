@@ -24,8 +24,7 @@ int main(int argc, char **argv) {
 
   char *end;
 
-  long host_port = 0;
-  host_port = strtol(argv[2], &end, 10);
+  long host_port = strtol(argv[2], &end, 10);
   if (end == argv[2]) {
     help();
     return -ARGS_ERROR;
