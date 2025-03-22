@@ -58,11 +58,11 @@ static void destroy_sync_vars();
 int server_init(uint16_t host_port, bool hosting) {
   init_sync_vars();
 
-  pthread_mutex_lock(&server_create_lock);
-
   server_hosting = hosting;
   // create server
   if (hosting) {
+    pthread_mutex_lock(&server_create_lock);
+
     int thread_create_err =
         pthread_create(&server_thread, NULL, &server_run, (void *)&host_port);
 
