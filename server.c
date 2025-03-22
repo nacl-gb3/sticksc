@@ -33,6 +33,7 @@
 
 pthread_t server_thread;
 
+bool sync_vars_init = false;
 pthread_mutex_t server_create_lock;
 bool port_active = false;
 pthread_cond_t server_create_cv;
@@ -41,10 +42,9 @@ bool port_targeted = false;
 bool connection_valid = false;
 pthread_cond_t connection_create_cv;
 pthread_mutex_t turn_lock;
-bool turn_completed = false;
+bool host_turn_complete = false;
+bool client_turn_complete = false;
 pthread_cond_t turn_cv;
-pthread_mutex_t server_stop_lock;
-pthread_cond_t server_stop_cv;
 bool server_hosting = false;
 
 int target_sock_fd;
@@ -52,15 +52,11 @@ char target_opp_name[64];
 
 int game_err_status = 0;
 
+static void init_sync_vars();
+static void destroy_sync_vars();
+
 int server_init(uint16_t host_port, bool hosting) {
-  pthread_mutex_init(&server_create_lock, NULL);
-  pthread_cond_init(&server_create_cv, NULL);
-  pthread_mutex_init(&connection_create_lock, NULL);
-  pthread_cond_init(&connection_create_cv, NULL);
-  pthread_mutex_init(&turn_lock, NULL);
-  pthread_cond_init(&turn_cv, NULL);
-  pthread_mutex_init(&server_stop_lock, NULL);
-  pthread_cond_init(&server_stop_cv, NULL);
+  init_sync_vars();
 
   pthread_mutex_lock(&server_create_lock);
 
@@ -74,6 +70,7 @@ int server_init(uint16_t host_port, bool hosting) {
       pthread_mutex_unlock(&server_create_lock);
       printf("Failed to create new thread; errno: %s\n",
              strerror(thread_create_err));
+      destroy_sync_vars();
       return THREAD_CREATE_ERROR;
     }
 
@@ -82,6 +79,7 @@ int server_init(uint16_t host_port, bool hosting) {
     if (!port_active) {
       pthread_mutex_unlock(&server_create_lock);
       printf("Server failed to initialize\n");
+      destroy_sync_vars();
       return SERVER_CREATE_ERROR;
     }
 
@@ -90,6 +88,7 @@ int server_init(uint16_t host_port, bool hosting) {
     // create server connection to listen to other server
     int connection_init_err = connection_init(host_port);
     if (connection_init_err) {
+      destroy_sync_vars();
       return connection_init_err;
     }
   }
@@ -244,7 +243,7 @@ void *server_run(void *arg) {
         connect_socket_fd = -1;
       } else {
         printf("malformed request (expected sticksc); halting server\n");
-        server_halt();
+        server_stop();
       }
       continue;
     }
@@ -255,15 +254,15 @@ void *server_run(void *arg) {
 
     if (!op) {
       printf("malformed request (expected non null value); halting server\n");
-      server_halt();
+      server_stop();
       continue;
     }
 
     if (!strcmp(op, "stop")) {
-      server_halt();
+      server_stop();
     } else if (!strcmp(op, "err")) {
       printf("client error occurred; halting server\n");
-      server_halt();
+      server_stop();
     } else if (!strcmp(op, "name")) {
       char *name = strtok(NULL, " ");
       if (name) {
@@ -278,24 +277,26 @@ void *server_run(void *arg) {
             snprintf(send_buffer, 128, "sticksc name %s", getenv("USER"));
         if (bread < 0) {
           printf("could not print to buffer; halting server\n");
-          server_halt();
+          server_stop();
           continue;
         }
         ssize_t bsent = send(connect_socket_fd, send_buffer, 128, 0);
         if (bsent == -1) {
           printf("failed to send data; errno: %s\n", strerror(errno));
-          server_halt();
+          server_stop();
           continue;
         }
       }
     } else if (!strcmp(op, "get-state")) {
       pthread_mutex_lock(&turn_lock);
-      pthread_cond_wait(&turn_cv, &turn_lock);
-      turn_completed = false;
+      while (!host_turn_complete) {
+        pthread_cond_wait(&turn_cv, &turn_lock);
+      }
+      host_turn_complete = false;
       pthread_mutex_unlock(&turn_lock);
       if (game_err_status) {
         printf("game errored; halting server\n");
-        server_halt();
+        server_stop();
         break;
       }
       // send game state to client process
@@ -304,14 +305,14 @@ void *server_run(void *arg) {
       bread = snprintf(send_buffer, 128, "sticksc get-state %04x", game_ste);
       if (bread == -1) {
         printf("could not print to buffer; halting server\n");
-        server_halt();
+        server_stop();
         continue;
       }
 
       ssize_t bsent = send(connect_socket_fd, send_buffer, 128, 0);
       if (bsent == -1) {
         printf("failed to send data; errno: %s\n", strerror(errno));
-        server_halt();
+        server_stop();
         continue;
       }
     } else if (!strcmp(op, "send-state")) {
@@ -319,11 +320,11 @@ void *server_run(void *arg) {
       char *state = strtok(NULL, " ");
       if (!state) {
         printf("malformed request (no state provided); halting server\n");
-        server_halt();
+        server_stop();
         continue;
       } else if (strnlen(state, 5) != 4) {
         printf("malformed request (expected 4 digit state); halting server\n");
-        server_halt();
+        server_stop();
         continue;
       }
       // convert state string to integer (base 16?)
@@ -336,17 +337,17 @@ void *server_run(void *arg) {
       set_compressed_game_state(game_ste);
 
       pthread_mutex_lock(&turn_lock);
-      turn_completed = true;
+      client_turn_complete = true;
       pthread_cond_signal(&turn_cv);
       pthread_mutex_unlock(&turn_lock);
     } else {
       printf("malformed request (invalid option); halting server\n");
-      server_halt();
+      server_stop();
       continue;
     }
   }
 
-  // cleanup?
+  // cleanup
   close(socket_listen_fd);
   if (connect_socket_fd != -1) {
     close(connect_socket_fd);
@@ -376,31 +377,27 @@ void server_stop() {
 
     close(target_sock_fd);
   }
+  destroy_sync_vars();
 }
 
 void server_wait_to_stop() {
-  if (server_hosting && port_active) {
-    pthread_mutex_lock(&server_stop_lock);
-    pthread_cond_wait(&server_stop_cv, &server_stop_lock);
-    pthread_mutex_unlock(&server_stop_lock);
+  if (server_hosting) {
+    int join_err = pthread_join(server_thread, NULL);
+    if (join_err) {
+      printf("failed to join server thread; errno: %s\n", strerror(errno));
+    }
   }
-}
-
-void server_halt() {
-  server_stop();
-  pthread_mutex_lock(&server_stop_lock);
-  pthread_cond_signal(&server_stop_cv);
-  pthread_mutex_unlock(&server_stop_lock);
 }
 
 int turn_await() {
   printf("Waiting for opponent's turn...\n");
   if (server_hosting) {
     pthread_mutex_lock(&turn_lock);
-    pthread_cond_wait(&turn_cv, &turn_lock);
-    turn_completed = false;
+    while (!client_turn_complete) {
+      pthread_cond_wait(&turn_cv, &turn_lock);
+    }
+    client_turn_complete = false;
     pthread_mutex_unlock(&turn_lock);
-    // decompress game state
   } else {
     // send get-state request; handles blocking
     // for client thread
@@ -464,7 +461,7 @@ void turn_complete(int err) {
   if (server_hosting) {
     pthread_mutex_lock(&turn_lock);
     game_err_status = err;
-    turn_completed = true;
+    host_turn_complete = true;
     pthread_cond_signal(&turn_cv);
     // signals client get-state request
     pthread_mutex_unlock(&turn_lock);
@@ -490,5 +487,29 @@ void turn_complete(int err) {
       printf("failed to send data; errno: %s\n", strerror(errno));
       return;
     }
+  }
+}
+
+static void init_sync_vars() {
+  if (!sync_vars_init) {
+    pthread_mutex_init(&server_create_lock, NULL);
+    pthread_cond_init(&server_create_cv, NULL);
+    pthread_mutex_init(&connection_create_lock, NULL);
+    pthread_cond_init(&connection_create_cv, NULL);
+    pthread_mutex_init(&turn_lock, NULL);
+    pthread_cond_init(&turn_cv, NULL);
+    sync_vars_init = true;
+  }
+}
+
+static void destroy_sync_vars() {
+  if (sync_vars_init) {
+    pthread_mutex_destroy(&server_create_lock);
+    pthread_cond_destroy(&server_create_cv);
+    pthread_mutex_destroy(&connection_create_lock);
+    pthread_cond_destroy(&connection_create_cv);
+    pthread_mutex_destroy(&turn_lock);
+    pthread_cond_destroy(&turn_cv);
+    sync_vars_init = false;
   }
 }
