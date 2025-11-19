@@ -1,5 +1,5 @@
 /*
-    sticksc - pseudo p2p implementation of sticks/chopsticks game
+    sticksc - network implementation of sticks/chopsticks game
     Copyright (C) 2025 nacl-gb3 (Gary Bond III)
     GitHub Link: https://github.com/nacl-gb3/sticksc/tree/main
 
@@ -20,6 +20,7 @@
 #include "game.h"
 #include "error.h"
 #include "server.h"
+#include <assert.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -115,6 +116,10 @@ int get_action(struct player *off, struct player *tgt) {
       }
     }
   }
+
+  // you really shouldn't get here; idek how you did
+  bool should_be_here = false;
+  assert(should_be_here);
 }
 
 int attack(struct player *off, struct player *tgt) {

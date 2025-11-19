@@ -1,5 +1,5 @@
 /*
-    sticksc - pseudo p2p implementation of sticks/chopsticks game
+    sticksc - network implementation of sticks/chopsticks game
     Copyright (C) 2025 nacl-gb3 (Gary Bond III)
     GitHub Link: https://github.com/nacl-gb3/sticksc/tree/main
 

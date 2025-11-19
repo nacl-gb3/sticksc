@@ -1,5 +1,5 @@
 /*
-    sticksc - pseudo p2p implementation of sticks/chopsticks game
+    sticksc - network implementation of sticks/chopsticks game
     Copyright (C) 2025 nacl-gb3 (Gary Bond III)
     GitHub Link: https://github.com/nacl-gb3/sticksc/tree/main
 
@@ -55,18 +55,16 @@ int main(int argc, char **argv) {
   }
 
   int server_init_err = server_init(host_port, hosting);
-
   if (server_init_err) {
     return -server_init_err;
   }
 
   char *opp_name = connection_wait();
-
-  printf("opp name: %s\n", opp_name);
-
   if (!opp_name) {
     return -CONNECTION_CREATE_ERROR;
   }
+
+  printf("opp name: %s\n", opp_name);
 
   // gcc doesn't have strlcpy apparently
   struct player you = DEFAULT_PLAYER;
